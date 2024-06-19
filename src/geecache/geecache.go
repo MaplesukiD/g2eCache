@@ -2,10 +2,13 @@ package geecache
 
 //                          是
 //接收 key --> 检查是否被缓存 ----> 返回缓存值 ⑴
-//                |  否                        是
-//                |-----> 是否应当从远程节点获取 ----> 与远程节点交互 --> 返回缓存值 ⑵
-//                            |  否
-//                            |-----> 调用`回调函数`，获取值并添加到缓存 --> 返回缓存值 ⑶
+//                |  否                       是
+//                |-----> 是否应当从远程节点获取 --> 使用一致性哈希选择节点      是                                    是
+//                             |                        |---> 是否是远程节点 ---> HTTP 客户端访问远程节点 --> 成功？-----> 返回缓存值（2）
+//                             |                                  | 否                                     | 否
+//                             |                                  | <-------------------------------------|
+//                             |  否                              ↓
+//                             |-----> 本地调用`回调函数`，获取值并添加到缓存 --> 返回缓存值 ⑶
 
 import (
 	"fmt"
@@ -28,6 +31,7 @@ type Group struct {
 	name      string
 	getter    Getter
 	mainCache cache
+	peers     PeerPicker
 }
 
 var (
@@ -72,6 +76,16 @@ func (g *Group) Get(key string) (ByteView, error) {
 }
 
 func (g *Group) load(key string) (value ByteView, err error) {
+	// 使用 PickPeer方法选择节点，若非本机节点，则调用 getFromPeer从远程获取。
+	if g.peers != nil {
+		if peer, ok := g.peers.PeerPicker(key); ok {
+			if value, err = g.getFromPeer(peer, key); err == nil {
+				return value, nil
+			}
+			log.Println("[GeeCache] Failed to get from peer", err)
+		}
+	}
+	// 本机节点，调用getLocally
 	return g.getLocally(key)
 }
 
@@ -88,4 +102,21 @@ func (g *Group) getLocally(key string) (ByteView, error) {
 
 func (g *Group) populateCache(key string, value ByteView) {
 	g.mainCache.add(key, value)
+}
+
+// 实现了 PeerPicker 接口的 HTTPPool 注入到 Group
+func (g *Group) RegisterPeers(peers PeerPicker) {
+	if g.peers != nil {
+		panic("RegisterPeerPicker called more than once")
+	}
+	g.peers = peers
+}
+
+// 使用实现了 PeerGetter 接口的 httpGetter 从远程节点获取缓存值
+func (g *Group) getFromPeer(peer PeerGetter, key string) (ByteView, error) {
+	bytes, err := peer.Get(g.name, key)
+	if err != nil {
+		return ByteView{}, err
+	}
+	return ByteView{b: bytes}, nil
 }

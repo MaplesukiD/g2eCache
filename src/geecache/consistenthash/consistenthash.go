@@ -1,14 +1,10 @@
-package main
+package consistenthash
 
 import (
 	"hash/crc32"
 	"sort"
 	"strconv"
 )
-
-func main() {
-
-}
 
 type Hash func(data []byte) uint32
 
@@ -23,6 +19,7 @@ type Map struct {
 	hashMap map[int]string
 }
 
+// New 指定虚拟节点个数以及hash算法
 func New(replicas int, fn Hash) *Map {
 	m := &Map{
 		replicas: replicas,
@@ -50,6 +47,7 @@ func (m *Map) Add(keys ...string) {
 	sort.Ints(m.keys)
 }
 
+// Get 根据虚拟节点key查找返回真实节点value
 func (m *Map) Get(key string) string {
 	if len(m.keys) == 0 {
 		return ""
