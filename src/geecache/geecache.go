@@ -12,6 +12,7 @@ package geecache
 
 import (
 	"fmt"
+	pb "goCache/src/geecache/geecachepb"
 	"goCache/src/geecache/singleflight"
 	"log"
 	"sync"
@@ -123,10 +124,24 @@ func (g *Group) RegisterPeers(peers PeerPicker) {
 }
 
 // 使用实现了 PeerGetter 接口的 httpGetter 从远程节点获取缓存值
+//func (g *Group) getFromPeer(peer PeerGetter, key string) (ByteView, error) {
+//	bytes, err := peer.Get(g.name, key)
+//	if err != nil {
+//		return ByteView{}, err
+//	}
+//	return ByteView{b: bytes}, nil
+//}
+
+// 使用实现了 PeerGetter 接口的 httpGetter 从远程节点获取缓存值
 func (g *Group) getFromPeer(peer PeerGetter, key string) (ByteView, error) {
-	bytes, err := peer.Get(g.name, key)
+	req := &pb.Request{
+		Group: g.name,
+		Key:   key,
+	}
+	res := &pb.Response{}
+	err := peer.Get(req, res)
 	if err != nil {
 		return ByteView{}, err
 	}
-	return ByteView{b: bytes}, nil
+	return ByteView{b: res.Value}, nil
 }
