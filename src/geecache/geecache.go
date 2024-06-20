@@ -12,6 +12,7 @@ package geecache
 
 import (
 	"fmt"
+	"goCache/src/geecache/singleflight"
 	"log"
 	"sync"
 )
@@ -32,6 +33,7 @@ type Group struct {
 	getter    Getter
 	mainCache cache
 	peers     PeerPicker
+	loader    *singleflight.Group
 }
 
 var (
@@ -49,6 +51,7 @@ func NewGroup(name string, cacheBytes int64, getter Getter) *Group {
 		name:      name,
 		getter:    getter,
 		mainCache: cache{cacheBytes: cacheBytes},
+		loader:    &singleflight.Group{},
 	}
 	groups[name] = g
 	return g
@@ -76,17 +79,24 @@ func (g *Group) Get(key string) (ByteView, error) {
 }
 
 func (g *Group) load(key string) (value ByteView, err error) {
-	// 使用 PickPeer方法选择节点，若非本机节点，则调用 getFromPeer从远程获取。
-	if g.peers != nil {
-		if peer, ok := g.peers.PeerPicker(key); ok {
-			if value, err = g.getFromPeer(peer, key); err == nil {
-				return value, nil
+	//保证并发状态下，针对相同的key，只调用一次load
+	view, err := g.loader.Do(key, func() (any, error) {
+		// 使用 PickPeer方法选择节点，若非本机节点，则调用 getFromPeer从远程获取。
+		if g.peers != nil {
+			if peer, ok := g.peers.PeerPicker(key); ok {
+				if value, err = g.getFromPeer(peer, key); err == nil {
+					return value, nil
+				}
+				log.Println("[GeeCache] Failed to get from peer", err)
 			}
-			log.Println("[GeeCache] Failed to get from peer", err)
 		}
+		// 本机节点，调用getLocally
+		return g.getLocally(key)
+	})
+	if err == nil {
+		return view.(ByteView), nil
 	}
-	// 本机节点，调用getLocally
-	return g.getLocally(key)
+	return
 }
 
 // 调用回调函数获取源数据，将源数据添加在缓存中
